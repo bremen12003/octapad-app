@@ -1,0 +1,9 @@
+{
+  "appId": "com.octapad.ritmos",
+  "appName": "Octapad",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true
+  }
+}
