@@ -1,0 +1,10 @@
+{
+  "name": "octapad-app",
+  "version": "1.0.0",
+  "description": "Octapad - Programadora de ritmos",
+  "dependencies": {
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/android": "^8.5.0"
+  }
+}
