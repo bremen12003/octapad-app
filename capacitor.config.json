@@ -1,6 +1,6 @@
 {
-  "appId": "com.octapad.ritmos",
-  "appName": "Octapad",
+  "appId": "com.versatilidad.youtube",
+  "appName": "YouTube",
   "webDir": "www",
   "bundledWebRuntime": false,
   "android": {
