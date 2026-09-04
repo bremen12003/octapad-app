@@ -1,7 +1,7 @@
 {
-  "name": "octapad-app",
+  "name": "youtube-versatilidad-musical",
   "version": "1.0.0",
-  "description": "Octapad - Programadora de ritmos",
+  "description": "YouTube - Versatilidad Musical",
   "dependencies": {
     "@capacitor/core": "^8.5.0",
     "@capacitor/cli": "^8.5.0",
