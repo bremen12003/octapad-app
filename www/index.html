@@ -758,6 +758,104 @@ function getCtx() {
   return audioCtx;
 }
 
+// ── Motor nativo de baja latencia (solo APK Android). Si no existe, todo sigue por Web Audio. ──
+const NA = {
+  on: false, info: null, ids: new WeakMap(), nid: 1, vid: 1, mult: 2, auto: true, pending: 0,
+  plug() {
+    try {
+      const C = window.Capacitor;
+      if (C && C.isNativePlatform && C.isNativePlatform() && C.Plugins && C.Plugins.NativeAudio) return C.Plugins.NativeAudio;
+    } catch (e) {}
+    return null;
+  },
+  async init() {
+    const p = NA.plug();
+    if (!p) return false;
+    try {
+      try { const m = parseInt(localStorage.getItem('oct_na_mult') || '0', 10); if (m >= 1 && m <= 16) { NA.mult = m; NA.auto = false; } } catch (e) {}
+      const r = await p.init({ mult: NA.mult, auto: NA.auto });
+      if (!r || !r.ok) { console.warn('NativeAudio no disponible', r && r.err); return false; }
+      NA.info = r; NA.on = true;
+      if (!document.getElementById('na-lat')) {
+        const d = document.createElement('div');
+        d.id = 'na-lat';
+        d.style.cssText = 'position:fixed;left:6px;bottom:2px;font:10px monospace;color:#8f8;z-index:9999;padding:3px 4px;background:rgba(0,0,0,.55);border-radius:4px';
+        d.addEventListener('click', () => NA.cycle());
+        document.body.appendChild(d);
+      }
+      NA.showLat();
+      setInterval(NA.showLat, 1500);
+      return true;
+    } catch (e) { console.warn('NativeAudio init', e); return false; }
+  },
+  b64(u8) {
+    let s = '';
+    for (let i = 0; i < u8.length; i += 12288) s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + 12288, u8.length)));
+    return btoa(s);
+  },
+  async up(buf) {
+    if (!NA.on || !buf || NA.ids.has(buf)) return;
+    const p = NA.plug();
+    const rec = { id: NA.nid++, ready: false };
+    NA.ids.set(buf, rec);
+    NA.pending++;
+    try {
+      const ch = Math.min(2, buf.numberOfChannels), n = buf.length;
+      const l = buf.getChannelData(0), r = ch > 1 ? buf.getChannelData(1) : null;
+      const pcm = new Int16Array(n * ch);
+      for (let i = 0; i < n; i++) {
+        let a = l[i]; a = a > 1 ? 1 : (a < -1 ? -1 : a); pcm[i * ch] = a < 0 ? a * 32768 : a * 32767;
+        if (r) { let b = r[i]; b = b > 1 ? 1 : (b < -1 ? -1 : b); pcm[i * ch + 1] = b < 0 ? b * 32768 : b * 32767; }
+      }
+      const bytes = new Uint8Array(pcm.buffer);
+      await p.sampleBegin({ id: rec.id, sr: buf.sampleRate, ch, frames: n });
+      const CH = 196608;
+      for (let o = 0; o < bytes.length; o += CH) await p.sampleChunk({ id: rec.id, data: NA.b64(bytes.subarray(o, Math.min(o + CH, bytes.length))) });
+      await p.sampleEnd({ id: rec.id });
+      rec.ready = true;
+    } catch (e) { console.warn('NA upload', e); NA.ids.delete(buf); }
+    NA.pending--;
+  },
+  // Dispara un pad por el motor nativo. Devuelve un identificador de voz, o 0 si hay que usar Web Audio.
+  hit(bank, id, pad, delayMs) {
+    if (!NA.on || !pad || !pad.buffer) return 0;
+    const rec = NA.ids.get(pad.buffer);
+    if (!rec) { NA.up(pad.buffer); return 0; }
+    if (!rec.ready) return 0;
+    const vid = NA.vid++; if (NA.vid > 2000000000) NA.vid = 1;
+    NA.plug().play({
+      s: rec.id, k: bank * 16 + id, vid,
+      v: pad.vol !== undefined ? pad.vol : 1.0,
+      l: pad.eqLow || 0, m: pad.eqMid || 0, h: pad.eqHigh || 0,
+      rv: pad.reverb !== undefined ? pad.reverb : 0.0,
+      rel: pad.release !== undefined ? pad.release : 0.80,
+      d: delayMs || 0
+    });
+    return vid;
+  },
+  click(delayMs, accent) { if (NA.on) NA.plug().click({ a: !!accent, d: Math.max(0, delayMs || 0) }); },
+  stopVoice(vid) { if (NA.on) NA.plug().stopVoice({ vid }); },
+  fake(vid) { return { start() {}, stop(t) { if (t === undefined) NA.stopVoice(vid); } }; },
+  async showLat() {
+    try {
+      const el = document.getElementById('na-lat');
+      const r = await NA.plug().getInfo();
+      NA.info = r;
+      if (el) el.textContent = '⚡ NATIVO ' + (r.lat > 0 ? Math.round(r.lat) : '?') + ' ms · buffer ' + r.mult + (r.auto ? ' auto' : '') + ' · toca para cambiar';
+    } catch (e) {}
+  },
+  async cycle() {
+    if (!NA.on) return;
+    const cur = NA.info ? NA.info.mult : NA.mult;
+    const next = NA.info && NA.info.auto ? 1 : (cur >= 8 ? 0 : (cur < 2 ? 2 : cur < 4 ? 4 : 8));
+    const p = NA.plug();
+    if (next === 0) { NA.auto = true; try { localStorage.removeItem('oct_na_mult'); } catch (e) {} await p.setAuto({ auto: true }); await p.setMult({ mult: 2 }); }
+    else { NA.auto = false; try { localStorage.setItem('oct_na_mult', String(next)); } catch (e) {} await p.setAuto({ auto: false }); await p.setMult({ mult: next }); }
+    NA.showLat();
+    showToast(next === 0 ? 'Latencia: AUTOMÁTICA' : 'Latencia: buffer ' + next + (next === 1 ? ' (mínima, puede tronar)' : next >= 8 ? ' (máxima estabilidad)' : ''));
+  }
+};
+
 function getEqChain(bank, padId) {
   const ctx = getCtx();
   const pad = banks[bank][padId];
@@ -804,6 +902,7 @@ function getInput(bank, padId) {
 
 function scheduleClick(when, accent) {
   const ctx = getCtx();
+  if (NA.on) { NA.click((when - ctx.currentTime) * 1000, accent); return; }
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.connect(gain); gain.connect(ctx.destination);
@@ -925,6 +1024,7 @@ function scheduler() {
         if (bk && bk[ev.padId] && bk[ev.padId].buffer) {
           const delay = evOffset - beatOffset;
           const livePad2 = bk[ev.padId];
+          if (NA.on && NA.hit(ev.bank, ev.padId, livePad2, (nextBeatTime + delay - ctx.currentTime) * 1000)) continue;
           const src = ctx.createBufferSource();
           src.buffer = livePad2.buffer;
           src.playbackRate.value = 1.0;
@@ -1113,6 +1213,12 @@ function startRoll(id, el) {
     if (!rollTimers[id]) return;
     const ctx = getCtx();
     const lp = banks[currentBank][id];
+    if (NA.on && NA.hit(currentBank, id, lp, 0)) {
+      el.classList.add('active');
+      setTimeout(() => el.classList.remove('active'), 50);
+      rollTimers[id] = setTimeout(fire, getRdbInterval());
+      return;
+    }
     const src = ctx.createBufferSource();
     src.buffer = lp.buffer;
     src.playbackRate.value = 1.0;
@@ -1150,7 +1256,12 @@ function playPadSound(id, el) {
   const release = livePad.release !== undefined ? livePad.release : 0.80;
   const reverb = livePad.reverb !== undefined ? livePad.reverb : 0.0;
 
-  const src = ctx.createBufferSource();
+  const nvid = NA.on ? NA.hit(currentBank, id, livePad, 0) : 0;
+  let src;
+  if (nvid) {
+    src = NA.fake(nvid);
+  } else {
+  src = ctx.createBufferSource();
   src.buffer = livePad.buffer;
   src.playbackRate.value = 1.0;
 
@@ -1167,6 +1278,7 @@ function playPadSound(id, el) {
     delay.connect(gainDst);
   } else {
     src.connect(getInput(currentBank, id));
+  }
   }
 
   src.start(0);
@@ -1324,6 +1436,7 @@ async function confirmName() {
   const name = document.getElementById('name-input').value.trim() || 'PAD ' + (pendingPadId + 1);
   const pad = banks[currentBank][pendingPadId];
   pad.buffer = pendingBuffer;
+  if (NA.on) NA.up(pad.buffer);
   pad.file = pendingFileName;
   pad.name = name.toUpperCase();
   pad.vol = 1.0;
@@ -1694,6 +1807,7 @@ async function init() {
   setStatus('🎵 INICIANDO...', 'loading');
   buildBeatDisplay();
   initAudio();
+  await NA.init();
   await openDB();
   setupPanelEvents();
 
@@ -1704,6 +1818,7 @@ async function init() {
     try {
       const buf = await ctx.decodeAudioData(row.arrayBuffer.slice(0));
       banks[row.bank][row.padId].buffer = buf;
+      if (NA.on) NA.up(buf);
       banks[row.bank][row.padId].name = row.name;
       banks[row.bank][row.padId].file = row.fileName;
       banks[row.bank][row.padId].vol = row.vol !== undefined ? row.vol : 1.0;
@@ -1728,6 +1843,7 @@ async function init() {
   }
 
   pads = banks[currentBank];
+  if (NA.on) { for (const bk of banks) for (const pd of bk) if (pd.buffer) NA.up(pd.buffer); }
   setStatus(countS > 0 ? '🎵 TOCA PARA ACTIVAR' : '✅ LISTO', countS > 0 ? 'loading' : 'ready');
   renderGrid();
   updateBankTabs();
