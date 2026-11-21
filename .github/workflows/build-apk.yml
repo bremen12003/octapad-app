@@ -29,6 +29,33 @@ jobs:
       - name: Agregar plataforma Android
         run: npx cap add android
 
+      - name: Motor de audio nativo (baja latencia)
+        run: |
+          MA=$(find android/app/src/main/java -name MainActivity.java | head -1)
+          DIR=$(dirname "$MA")
+          PKG=$(grep -m1 '^package' "$MA" | sed 's/package \(.*\);/\1/')
+          echo "Paquete: $PKG"
+          for f in NAMixer NativeAudioEngine NativeAudioPlugin; do
+            sed "s/PACKAGE_PLACEHOLDER/$PKG/" native/$f.java > "$DIR/$f.java"
+          done
+          cat > "$MA" <<EOF
+          package $PKG;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              registerPlugin(NativeAudioPlugin.class);
+              super.onCreate(savedInstanceState);
+            }
+          }
+          EOF
+          echo "--- MainActivity ---"
+          cat "$MA"
+          ls -la "$DIR"
+
       - name: Sincronizar Capacitor
         run: npx cap sync android
 
